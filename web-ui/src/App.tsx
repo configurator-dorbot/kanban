@@ -19,7 +19,7 @@ import { TopBar } from "@/components/top-bar";
 import { createInitialBoardData } from "@/data/board-data";
 import { createIdleTaskSession } from "@/hooks/app-utils";
 import { RuntimeDisconnectedFallback } from "@/hooks/runtime-disconnected-fallback";
-import { TaskActionsProvider } from "@/hooks/task-actions-context";
+import { TaskActionsProvider } from "@/context/task-actions-context";
 import { useAppHotkeys } from "@/hooks/use-app-hotkeys";
 import { useBoardInteractions } from "@/hooks/use-board-interactions";
 import { useDocumentVisibility } from "@/hooks/use-document-visibility";

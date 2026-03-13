@@ -1,6 +1,6 @@
 import { Button, Classes, Icon, type IconName, KeyComboTag } from "@blueprintjs/core";
 import type { ReactNode } from "react";
-import { useTaskActions } from "@/hooks/task-actions-context";
+import { useTaskActions } from "@/context/task-actions-context";
 import { KBD } from "../KBD";
 
 interface QuickAction {
