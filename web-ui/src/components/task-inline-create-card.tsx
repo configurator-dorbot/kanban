@@ -83,7 +83,11 @@ export function TaskInlineCreateCard({
 	const autoReviewModeId = `${idPrefix}-auto-review-mode-select`;
 	const branchSelectId = `${idPrefix}-branch-select`;
 	const actionLabel = mode === "edit" ? "Save" : "Create";
-	const cancelLabel = <span>Cancel <KBD>esc</KBD></span>;
+	const cancelLabel = (
+		<span>
+			Cancel <KBD>esc</KBD>
+		</span>
+	);
 	const cardMarginBottom = mode === "create" ? 8 : 0;
 
 	useHotkeys(
