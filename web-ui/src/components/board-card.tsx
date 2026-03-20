@@ -1,5 +1,5 @@
 import { Draggable } from "@hello-pangea/dnd";
-import { GitBranch, Pencil, Play, RotateCcw, Trash2 } from "lucide-react";
+import { GitBranch, Play, RotateCcw, Trash2 } from "lucide-react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -376,6 +376,23 @@ export function BoardCard({
 											}}
 											className="h-7 w-full rounded-md border border-border-focus bg-surface-2 px-2 text-sm font-medium text-text-primary focus:outline-none"
 										/>
+									) : onSaveTitle ? (
+										<button
+											type="button"
+											aria-label="Edit task title"
+											onMouseDown={stopEvent}
+											onClick={(event) => {
+												stopEvent(event);
+												setDraftTitle(card.title);
+												setIsEditingTitle(true);
+											}}
+											className={cn(
+												"kb-line-clamp-1 m-0 w-full cursor-text rounded-sm text-left font-medium text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+												isTrashCard && "line-through text-text-tertiary",
+											)}
+										>
+											{displayTitle}
+										</button>
 									) : (
 										<p
 											className={cn(
@@ -388,22 +405,6 @@ export function BoardCard({
 									)}
 								</div>
 								<div className="flex items-center gap-0.5">
-									{onSaveTitle ? (
-										<Tooltip content="Edit title" side="bottom">
-											<Button
-												icon={<Pencil size={12} />}
-												variant="ghost"
-												size="sm"
-												aria-label="Edit task title"
-												onMouseDown={stopEvent}
-												onClick={(event) => {
-													stopEvent(event);
-													setDraftTitle(card.title);
-													setIsEditingTitle(true);
-												}}
-											/>
-										</Tooltip>
-									) : null}
 									{columnId === "backlog" ? (
 										<Button
 											icon={<Play size={14} />}

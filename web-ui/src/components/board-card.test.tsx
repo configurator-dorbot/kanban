@@ -370,15 +370,15 @@ describe("BoardCard", () => {
 			root.render(<TitleEditHarness />);
 		});
 
-		const editButton = container.querySelector('button[aria-label="Edit task title"]');
-		expect(editButton).toBeInstanceOf(HTMLButtonElement);
+		const titleButton = container.querySelector('button[aria-label="Edit task title"]');
+		expect(titleButton).toBeInstanceOf(HTMLButtonElement);
 
 		await act(async () => {
-			if (!(editButton instanceof HTMLButtonElement)) {
-				throw new Error("Expected an edit title button.");
+			if (!(titleButton instanceof HTMLButtonElement)) {
+				throw new Error("Expected a clickable title button.");
 			}
-			editButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-			editButton.click();
+			titleButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+			titleButton.click();
 		});
 
 		const input = container.querySelector("input");
