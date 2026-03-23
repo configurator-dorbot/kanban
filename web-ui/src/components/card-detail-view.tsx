@@ -4,7 +4,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { AgentTerminalPanel } from "@/components/detail-panels/agent-terminal-panel";
-import { ClineAgentChatPanel } from "@/components/detail-panels/cline-agent-chat-panel";
+import { ClineAgentChatPanel, type ClineAgentChatPanelHandle } from "@/components/detail-panels/cline-agent-chat-panel";
 import { ColumnContextPanel } from "@/components/detail-panels/column-context-panel";
 import { type DiffLineComment, DiffViewerPanel } from "@/components/detail-panels/diff-viewer-panel";
 import { FileTreePanel } from "@/components/detail-panels/file-tree-panel";
@@ -13,7 +13,13 @@ import { Button } from "@/components/ui/button";
 import type { ClineChatActionResult } from "@/hooks/use-cline-chat-runtime-actions";
 import type { ClineChatMessage } from "@/hooks/use-cline-chat-session";
 import { isNativeClineAgentSelected } from "@/runtime/native-agent";
-import type { RuntimeAgentId, RuntimeTaskSessionSummary, RuntimeWorkspaceChangesMode } from "@/runtime/types";
+import type {
+	RuntimeAgentId,
+	RuntimeConfigResponse,
+	RuntimeTaskSessionMode,
+	RuntimeTaskSessionSummary,
+	RuntimeWorkspaceChangesMode,
+} from "@/runtime/types";
 import { useRuntimeWorkspaceChanges } from "@/runtime/use-runtime-workspace-changes";
 import { useTaskWorkspaceStateVersionValue } from "@/stores/workspace-metadata-store";
 import { TERMINAL_THEME_COLORS } from "@/terminal/theme-colors";
@@ -180,6 +186,7 @@ export function CardDetailView({
 	currentProjectId,
 	workspacePath,
 	selectedAgentId = null,
+	runtimeConfig = null,
 	sessionSummary,
 	taskSessions,
 	onSessionSummary,
@@ -210,6 +217,7 @@ export function CardDetailView({
 	onCancelClineChatTurn,
 	onLoadClineChatMessages,
 	latestClineChatMessage,
+	streamedClineChatMessages,
 	onMoveToTrash,
 	isMoveToTrashLoading,
 	gitHistoryPanel,
@@ -227,11 +235,13 @@ export function CardDetailView({
 	isBottomTerminalExpanded,
 	onBottomTerminalToggleExpand,
 	isDocumentVisible = true,
+	onClineSettingsSaved,
 }: {
 	selection: CardSelection;
 	currentProjectId: string | null;
 	workspacePath?: string | null;
 	selectedAgentId?: RuntimeAgentId | null;
+	runtimeConfig?: RuntimeConfigResponse | null;
 	sessionSummary: RuntimeTaskSessionSummary | null;
 	taskSessions: Record<string, RuntimeTaskSessionSummary>;
 	onSessionSummary: (summary: RuntimeTaskSessionSummary) => void;
@@ -258,10 +268,15 @@ export function CardDetailView({
 	moveToTrashLoadingById?: Record<string, boolean>;
 	onAddReviewComments?: (taskId: string, text: string) => void;
 	onSendReviewComments?: (taskId: string, text: string) => void;
-	onSendClineChatMessage?: (taskId: string, text: string) => Promise<ClineChatActionResult>;
+	onSendClineChatMessage?: (
+		taskId: string,
+		text: string,
+		options?: { mode?: RuntimeTaskSessionMode },
+	) => Promise<ClineChatActionResult>;
 	onCancelClineChatTurn?: (taskId: string) => Promise<{ ok: boolean; message?: string }>;
 	onLoadClineChatMessages?: (taskId: string) => Promise<ClineChatMessage[] | null>;
 	latestClineChatMessage?: ClineChatMessage | null;
+	streamedClineChatMessages?: ClineChatMessage[] | null;
 	onMoveToTrash: () => void;
 	isMoveToTrashLoading?: boolean;
 	gitHistoryPanel?: ReactNode;
@@ -279,6 +294,7 @@ export function CardDetailView({
 	isBottomTerminalExpanded?: boolean;
 	onBottomTerminalToggleExpand?: () => void;
 	isDocumentVisible?: boolean;
+	onClineSettingsSaved?: () => void;
 }): React.ReactElement {
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [diffComments, setDiffComments] = useState<Map<string, DiffLineComment>>(new Map());
@@ -289,6 +305,7 @@ export function CardDetailView({
 	const resizeDragRef = useRef<{ startX: number; startRatio: number; containerWidth: number } | null>(null);
 	const previousBodyStyleRef = useRef<{ userSelect: string; cursor: string } | null>(null);
 	const mainRowRef = useRef<HTMLDivElement | null>(null);
+	const clineAgentChatPanelRef = useRef<ClineAgentChatPanelHandle | null>(null);
 
 	const stopResize = useCallback(() => {
 		setIsResizing(false);
@@ -480,6 +497,31 @@ export function CardDetailView({
 		setIsDiffExpanded((previous) => !previous);
 	}, [bottomTerminalOpen, isDiffExpanded, onBottomTerminalClose]);
 
+	const handleAddDiffComments = useCallback(
+		(formatted: string) => {
+			if (showClineAgentChatPanel) {
+				clineAgentChatPanelRef.current?.appendToDraft(formatted);
+				setIsDiffExpanded(false);
+				return;
+			}
+			onAddReviewComments?.(selection.card.id, formatted);
+		},
+		[onAddReviewComments, selection.card.id, showClineAgentChatPanel],
+	);
+
+	const handleSendDiffComments = useCallback(
+		(formatted: string) => {
+			if (showClineAgentChatPanel) {
+				void clineAgentChatPanelRef.current?.sendText(formatted);
+				setIsDiffExpanded(false);
+				return;
+			}
+			onSendReviewComments?.(selection.card.id, formatted);
+			setIsDiffExpanded(false);
+		},
+		[onSendReviewComments, selection.card.id, showClineAgentChatPanel],
+	);
+
 	return (
 		<div
 			style={{
@@ -528,16 +570,23 @@ export function CardDetailView({
 				) : (
 					<>
 						<div ref={mainRowRef} style={{ display: "flex", flex: "1 1 0", minHeight: 0, overflow: "hidden" }}>
-							{!isDiffExpanded ? (
-								<div style={{ display: "flex", width: agentPanelPercent, minWidth: 0, minHeight: 0 }}>
+							<div
+								style={{ display: isDiffExpanded ? "none" : "flex", width: agentPanelPercent, minWidth: 0, minHeight: 0 }}
+							>
 									{showClineAgentChatPanel ? (
 										<ClineAgentChatPanel
+											ref={clineAgentChatPanelRef}
 											taskId={selection.card.id}
 											summary={sessionSummary}
-											taskColumnId={selection.column.id}
+														taskColumnId={selection.column.id}
+											defaultMode={selection.card.startInPlanMode ? "plan" : "act"}
+											workspaceId={currentProjectId}
+											runtimeConfig={runtimeConfig}
+											onClineSettingsSaved={onClineSettingsSaved}
 											onSendMessage={onSendClineChatMessage}
 											onCancelTurn={onCancelClineChatTurn}
 											onLoadMessages={onLoadClineChatMessages}
+											incomingMessages={streamedClineChatMessages}
 											incomingMessage={latestClineChatMessage}
 											onCommit={onAgentCommitTask ? () => onAgentCommitTask(selection.card.id) : undefined}
 											onOpenPr={onAgentOpenPrTask ? () => onAgentOpenPrTask(selection.card.id) : undefined}
@@ -590,7 +639,6 @@ export function CardDetailView({
 										/>
 									)}
 								</div>
-							) : null}
 							{!isDiffExpanded ? (
 								<div
 									role="separator"
@@ -605,6 +653,7 @@ export function CardDetailView({
 								>
 									<div
 										onMouseDown={handleSeparatorMouseDown}
+										className="hover:bg-accent/30"
 										style={{
 											position: "absolute",
 											left: -2,
@@ -645,20 +694,9 @@ export function CardDetailView({
 												selectedPath={selectedPath}
 												onSelectedPathChange={setSelectedPath}
 												viewMode={isDiffExpanded ? "split" : "unified"}
-												onAddToTerminal={
-													onAddReviewComments
-														? (formatted) => onAddReviewComments(selection.card.id, formatted)
-														: undefined
-												}
-												onSendToTerminal={
-													onSendReviewComments
-														? (formatted) => {
-																onSendReviewComments(selection.card.id, formatted);
-																setIsDiffExpanded(false);
-															}
-														: undefined
-												}
-												comments={diffComments}
+												onAddToTerminal={onAddReviewComments || showClineAgentChatPanel ? handleAddDiffComments : undefined}
+											onSendToTerminal={onSendReviewComments || showClineAgentChatPanel ? handleSendDiffComments : undefined}
+											comments={diffComments}
 												onCommentsChange={setDiffComments}
 											/>
 											<FileTreePanel

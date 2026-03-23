@@ -2,7 +2,9 @@ import { type ReactElement, useMemo, useState } from "react";
 import { Brain, ChevronDown, ChevronRight, XCircle } from "lucide-react";
 
 import { ClineMarkdownContent } from "@/components/detail-panels/cline-markdown-content";
+import { TaskImageStrip } from "@/components/task-image-strip";
 import {
+	formatToolInputForDisplay,
 	getToolSummary,
 	parseToolMessageContent,
 	parseToolOutput,
@@ -10,6 +12,7 @@ import {
 import { cn } from "@/components/ui/cn";
 import { Spinner } from "@/components/ui/spinner";
 import type { ClineChatMessage } from "@/hooks/use-cline-chat-session";
+import { normalizeUserInput } from '@clinebot/shared'
 
 function ToolMessageBlock({ message }: { message: ClineChatMessage }): ReactElement {
 	const parsed = useMemo(() => parseToolMessageContent(message.content), [message.content]);
@@ -19,7 +22,8 @@ function ToolMessageBlock({ message }: { message: ClineChatMessage }): ReactElem
 
 	const summary = useMemo(() => getToolSummary(parsed.toolName, parsed.input), [parsed.toolName, parsed.input]);
 	const toolOutput = useMemo(() => (parsed.output ? parseToolOutput(parsed.output) : null), [parsed.output]);
-	const hasExpandableContent = Boolean(parsed.output || parsed.error);
+	const fullInput = useMemo(() => formatToolInputForDisplay(parsed.toolName, parsed.input), [parsed.toolName, parsed.input]);
+	const hasExpandableContent = Boolean(parsed.output || parsed.error || fullInput);
 
 	return (
 		<div className="w-full">
@@ -58,6 +62,16 @@ function ToolMessageBlock({ message }: { message: ClineChatMessage }): ReactElem
 
 			{expanded ? (
 				<div className="mt-1 space-y-1.5 pr-1.5 pl-[24px] pb-1">
+					{/* Full tool input (e.g. complete run_commands commands) */}
+					{fullInput ? (
+						<div>
+							<div className="mb-0.5 text-xs text-text-tertiary">Command</div>
+							<pre className="max-h-60 overflow-auto rounded bg-surface-0 px-2 py-1.5 text-xs leading-relaxed whitespace-pre-wrap break-all text-text-primary">
+								{fullInput}
+							</pre>
+						</div>
+					) : null}
+
 					{/* Parsed ToolOperationResult output */}
 					{toolOutput
 						? toolOutput.results.map((result, i) => (
@@ -126,9 +140,12 @@ export function ClineChatMessageItem({ message }: { message: ClineChatMessage })
 		return <ReasoningMessageBlock message={message} />;
 	}
 	if (message.role === "user") {
+		const hasText = message.content.trim().length > 0;
+		const hasImages = Boolean(message.images && message.images.length > 0);
 		return (
-			<div className="ml-auto max-w-[85%] rounded-md bg-accent/20 px-3 py-2 text-sm whitespace-pre-wrap text-text-primary">
-				{message.content}
+			<div className="ml-auto max-w-[85%] rounded-md bg-accent/20 px-3 py-2 text-sm text-text-primary">
+				{hasText ? <div className="whitespace-pre-wrap">{normalizeUserInput(message.content)}</div> : null}
+				{hasImages ? <TaskImageStrip images={message.images ?? []} className={hasText ? "mt-2" : undefined} /> : null}
 			</div>
 		);
 	}
@@ -142,7 +159,7 @@ export function ClineChatMessageItem({ message }: { message: ClineChatMessage })
 	}
 	const label = message.role === "status" ? "Status" : "System";
 	return (
-		<div className="max-w-[85%] rounded-md border border-border bg-surface-3/70 px-3 py-2 text-sm whitespace-pre-wrap text-text-secondary">
+		<div className="max-w-[85%] rounded-md border border-border bg-surface-3/70 px-3 py-2 text-sm whitespace-pre-wrap break-all text-text-secondary">
 			<div className="mb-1 text-xs uppercase tracking-wide text-text-tertiary">{label}</div>
 			{message.content}
 		</div>

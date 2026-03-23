@@ -60,6 +60,33 @@ async function withTemporaryHome<T>(run: () => Promise<T>): Promise<T> {
 }
 
 describe.sequential("task-worktree integration", () => {
+	it("returns a friendly error when the repository has no initial commit", async () => {
+		await withTemporaryHome(async () => {
+			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-unborn-");
+			try {
+				const repoPath = join(sandboxRoot, "repo");
+				mkdirSync(repoPath, { recursive: true });
+
+				runGit(repoPath, ["init"]);
+				runGit(repoPath, ["config", "user.name", "Kanban Test"]);
+				runGit(repoPath, ["config", "user.email", "kanban-test@example.com"]);
+
+				const currentBranch = runGit(repoPath, ["symbolic-ref", "--short", "HEAD"]);
+				const ensured = await ensureTaskWorktreeIfDoesntExist({
+					cwd: repoPath,
+					taskId: "task-no-initial-commit",
+					baseRef: currentBranch,
+				});
+
+				expect(ensured.ok).toBe(false);
+				expect(ensured.error).toContain("does not have an initial commit yet");
+				expect(ensured.error).toContain(`base ref "${currentBranch}"`);
+			} finally {
+				cleanup();
+			}
+		});
+	});
+
 	it("keeps symlinked ignored paths ignored in task worktrees", async () => {
 		await withTemporaryHome(async () => {
 			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-");
@@ -169,6 +196,107 @@ describe.sequential("task-worktree integration", () => {
 		});
 	});
 
+	it("skips symlinking root node_modules for root Turbopack apps", async () => {
+		await withTemporaryHome(async () => {
+			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-root-turbopack-");
+			try {
+				const repoPath = join(sandboxRoot, "repo");
+				mkdirSync(repoPath, { recursive: true });
+
+				runGit(repoPath, ["init"]);
+				runGit(repoPath, ["config", "user.name", "Kanban Test"]);
+				runGit(repoPath, ["config", "user.email", "kanban-test@example.com"]);
+
+				writeFileSync(join(repoPath, "README.md"), "hello\n", "utf8");
+				writeFileSync(
+					join(repoPath, "package.json"),
+					'{\n  "scripts": {\n    "dev": "next dev --turbopack"\n  }\n}\n',
+					"utf8",
+				);
+				writeFileSync(join(repoPath, ".gitignore"), "/.next/\n/node_modules/\n", "utf8");
+				mkdirSync(join(repoPath, ".next"), { recursive: true });
+				mkdirSync(join(repoPath, "node_modules"), { recursive: true });
+				writeFileSync(join(repoPath, ".next", "BUILD_ID"), "build\n", "utf8");
+				writeFileSync(join(repoPath, "node_modules", "package.json"), '{\n  "name": "fixture"\n}\n', "utf8");
+
+				runGit(repoPath, ["add", "README.md", "package.json", ".gitignore"]);
+				runGit(repoPath, ["commit", "-m", "init"]);
+
+				const ensured = await ensureTaskWorktreeIfDoesntExist({
+					cwd: repoPath,
+					taskId: "task-root-turbopack",
+					baseRef: "HEAD",
+				});
+				expect(ensured.ok).toBe(true);
+				if (!ensured.ok || !ensured.path) {
+					throw new Error("Task worktree was not created");
+				}
+
+				const nextPath = join(ensured.path, ".next");
+				const nodeModulesPath = join(ensured.path, "node_modules");
+				expectMirroredPathBehavior(nextPath);
+				expect(existsSync(nodeModulesPath)).toBe(false);
+				expect(runGit(ensured.path, ["status", "--porcelain", "--", ".next"])).toBe("");
+				expect(runGit(ensured.path, ["status", "--porcelain", "--", "node_modules"])).toBe("");
+			} finally {
+				cleanup();
+			}
+		});
+	});
+
+	it("skips only nested Turbopack app node_modules while keeping root node_modules symlinked", async () => {
+		await withTemporaryHome(async () => {
+			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-nested-turbopack-");
+			try {
+				const repoPath = join(sandboxRoot, "repo");
+				const appPath = join(repoPath, "apps", "web");
+				mkdirSync(appPath, { recursive: true });
+
+				runGit(repoPath, ["init"]);
+				runGit(repoPath, ["config", "user.name", "Kanban Test"]);
+				runGit(repoPath, ["config", "user.email", "kanban-test@example.com"]);
+
+				writeFileSync(join(repoPath, "README.md"), "hello\n", "utf8");
+				writeFileSync(join(repoPath, "package.json"), '{\n  "private": true\n}\n', "utf8");
+				writeFileSync(
+					join(appPath, "package.json"),
+					'{\n  "dependencies": {\n    "next": "15.0.0"\n  },\n  "scripts": {\n    "dev": "next dev --turbopack"\n  }\n}\n',
+					"utf8",
+				);
+				writeFileSync(join(repoPath, ".gitignore"), "/node_modules/\n/apps/web/node_modules/\n", "utf8");
+				mkdirSync(join(repoPath, "node_modules"), { recursive: true });
+				mkdirSync(join(appPath, "node_modules"), { recursive: true });
+				writeFileSync(join(repoPath, "node_modules", "package.json"), '{\n  "name": "root-fixture"\n}\n', "utf8");
+				writeFileSync(join(appPath, "node_modules", "package.json"), '{\n  "name": "app-fixture"\n}\n', "utf8");
+
+				runGit(repoPath, ["add", "README.md", "package.json", "apps/web/package.json", ".gitignore"]);
+				runGit(repoPath, ["commit", "-m", "init"]);
+
+				const ensured = await ensureTaskWorktreeIfDoesntExist({
+					cwd: repoPath,
+					taskId: "task-nested-turbopack",
+					baseRef: "HEAD",
+				});
+				expect(ensured.ok).toBe(true);
+				if (!ensured.ok || !ensured.path) {
+					throw new Error("Task worktree was not created");
+				}
+
+				const rootNodeModulesPath = join(ensured.path, "node_modules");
+				const appNodeModulesPath = join(ensured.path, "apps", "web", "node_modules");
+				expectMirroredPathBehavior(rootNodeModulesPath);
+				expect(existsSync(appNodeModulesPath)).toBe(false);
+				expect(runGit(ensured.path, ["status", "--porcelain", "--", "node_modules"])).toBe("");
+				expect(runGit(ensured.path, ["status", "--porcelain", "--", "apps/web/node_modules"])).toBe("");
+				if (existsSync(rootNodeModulesPath)) {
+					expect(runGit(ensured.path, ["check-ignore", "-v", "node_modules"])).toContain("info/exclude");
+				}
+			} finally {
+				cleanup();
+			}
+		});
+	});
+
 	it("restores a trashed task patch onto the saved commit", async () => {
 		await withTemporaryHome(async () => {
 			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-restore-");
@@ -209,7 +337,8 @@ describe.sequential("task-worktree integration", () => {
 
 				const patchPath = join(
 					process.env.HOME ?? sandboxRoot,
-					".kanban",
+					".cline",
+					"kanban",
 					"trashed-task-patches",
 					`${taskId}.${createdCommit}.patch`,
 				);

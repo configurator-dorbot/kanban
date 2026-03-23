@@ -1,22 +1,26 @@
 import { Draggable } from "@hello-pangea/dnd";
-import { GitBranch, Play, RotateCcw, Trash2 } from "lucide-react";
+import { buildTaskWorktreeDisplayPath } from "@runtime-task-worktree-path";
+import { AlertCircle, GitBranch, Play, RotateCcw, Trash2 } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { formatClineToolCallLabel } from "@runtime-cline-tool-call-display";
-import { buildTaskWorktreeDisplayPath } from "@runtime-task-worktree-path";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/components/ui/cn";
+import { Spinner } from "@/components/ui/spinner";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { RuntimeTaskSessionSummary } from "@/runtime/types";
 import { useTaskWorkspaceSnapshotValue } from "@/stores/workspace-metadata-store";
 import type { BoardCard as BoardCardModel, BoardColumnId } from "@/types";
 import { getTaskAutoReviewCancelButtonLabel } from "@/types";
 import { formatPathForDisplay } from "@/utils/path-display";
 import { useMeasure } from "@/utils/react-use";
-import { clampTextWithInlineSuffix, splitPromptToTitleDescriptionByWidth, truncateTaskPromptLabel } from "@/utils/task-prompt";
+import {
+	clampTextWithInlineSuffix,
+	splitPromptToTitleDescriptionByWidth,
+	truncateTaskPromptLabel,
+} from "@/utils/task-prompt";
 import { DEFAULT_TEXT_MEASURE_FONT, measureTextWidth, readElementFontShorthand } from "@/utils/text-measure";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { Tooltip } from "@/components/ui/tooltip";
-import { cn } from "@/components/ui/cn";
 
 interface CardSessionActivity {
 	dotColor: string;
@@ -48,6 +52,67 @@ function reconstructTaskWorktreeDisplayPath(taskId: string, workspacePath: strin
 	}
 }
 
+function extractToolInputSummaryFromActivityText(activityText: string, toolName: string): string | null {
+	const escapedToolName = toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const match = activityText.match(new RegExp(`^(?:Using|Completed|Failed|Calling)\\s+${escapedToolName}(?::\\s*(.+))?$`));
+	if (!match) {
+		return null;
+	}
+	const rawSummary = match[1]?.trim() ?? "";
+	if (!rawSummary) {
+		return null;
+	}
+	if (activityText.startsWith("Failed ")) {
+		const [operationSummary] = rawSummary.split(": ");
+		return operationSummary?.trim() || null;
+	}
+	return rawSummary;
+}
+
+function parseToolCallFromActivityText(activityText: string): { toolName: string; toolInputSummary: string | null } | null {
+	const match = activityText.match(/^(?:Using|Completed|Failed|Calling)\s+([^:()]+?)(?::\s*(.+))?$/);
+	if (!match?.[1]) {
+		return null;
+	}
+	const toolName = match[1].trim();
+	if (!toolName) {
+		return null;
+	}
+	const rawSummary = match[2]?.trim() ?? "";
+	if (!rawSummary) {
+		return { toolName, toolInputSummary: null };
+	}
+	if (activityText.startsWith("Failed ")) {
+		const [operationSummary] = rawSummary.split(": ");
+		return {
+			toolName,
+			toolInputSummary: operationSummary?.trim() || null,
+		};
+	}
+	return {
+		toolName,
+		toolInputSummary: rawSummary,
+	};
+}
+
+function resolveToolCallLabel(
+	activityText: string | undefined,
+	toolName: string | null,
+	toolInputSummary: string | null,
+): string | null {
+	if (toolName) {
+		return formatClineToolCallLabel(toolName, toolInputSummary ?? extractToolInputSummaryFromActivityText(activityText ?? "", toolName));
+	}
+	if (!activityText) {
+		return null;
+	}
+	const parsed = parseToolCallFromActivityText(activityText);
+	if (!parsed) {
+		return null;
+	}
+	return formatClineToolCallLabel(parsed.toolName, parsed.toolInputSummary);
+}
+
 function getCardSessionActivity(summary: RuntimeTaskSessionSummary | undefined): CardSessionActivity | null {
 	if (!summary) {
 		return null;
@@ -58,23 +123,37 @@ function getCardSessionActivity(summary: RuntimeTaskSessionSummary | undefined):
 	const toolInputSummary = hookActivity?.toolInputSummary?.trim() ?? null;
 	const source = hookActivity?.source?.trim() ?? null;
 	const finalMessage = hookActivity?.finalMessage?.trim();
+	const hookEventName = hookActivity?.hookEventName?.trim() ?? null;
 	if (summary.state === "awaiting_review" && finalMessage) {
 		return { dotColor: SESSION_ACTIVITY_COLOR.success, text: finalMessage };
 	}
+	if (
+		finalMessage &&
+		!toolName &&
+		(hookEventName === "assistant_delta" || hookEventName === "agent_end" || hookEventName === "turn_start")
+	) {
+		return {
+			dotColor: summary.state === "running" ? SESSION_ACTIVITY_COLOR.thinking : SESSION_ACTIVITY_COLOR.success,
+			text: finalMessage,
+		};
+	}
 	if (activityText) {
-		let dotColor: string = SESSION_ACTIVITY_COLOR.thinking;
+		let dotColor: string = summary.state === "failed" ? SESSION_ACTIVITY_COLOR.error : SESSION_ACTIVITY_COLOR.thinking;
 		let text = activityText;
-		if (source === "cline-sdk" && toolName) {
+		const toolCallLabel = resolveToolCallLabel(activityText, toolName, toolInputSummary);
+		if (toolCallLabel) {
 			if (text.startsWith("Failed ")) {
 				dotColor = SESSION_ACTIVITY_COLOR.error;
 			}
 			return {
 				dotColor,
-				text: formatClineToolCallLabel(toolName, toolInputSummary),
+				text: toolCallLabel,
 			};
 		}
 		if (text.startsWith("Final: ")) {
 			dotColor = SESSION_ACTIVITY_COLOR.success;
+			text = text.slice(7);
+		} else if (text.startsWith("Agent: ")) {
 			text = text.slice(7);
 		} else if (text.startsWith("Waiting for approval")) {
 			dotColor = SESSION_ACTIVITY_COLOR.waiting;
@@ -86,6 +165,10 @@ function getCardSessionActivity(summary: RuntimeTaskSessionSummary | undefined):
 			return { dotColor: SESSION_ACTIVITY_COLOR.thinking, text: "Thinking..." };
 		}
 		return { dotColor, text };
+	}
+	if (summary.state === "failed") {
+		const failedText = finalMessage ?? activityText ?? "Task failed to start";
+		return { dotColor: SESSION_ACTIVITY_COLOR.error, text: failedText };
 	}
 	if (summary.state === "awaiting_review") {
 		return { dotColor: SESSION_ACTIVITY_COLOR.success, text: "Waiting for review" };
@@ -245,6 +328,9 @@ export function BoardCard({
 
 	const renderStatusMarker = () => {
 		if (columnId === "in_progress") {
+			if (sessionSummary?.state === "failed") {
+				return <AlertCircle size={12} className="text-status-red" />;
+			}
 			return <Spinner size={12} />;
 		}
 		return null;
@@ -268,7 +354,17 @@ export function BoardCard({
 		: null;
 	const showReviewGitActions = columnId === "review" && (reviewWorkspaceSnapshot?.changedFiles ?? 0) > 0;
 	const isAnyGitActionLoading = isCommitLoading || isOpenPrLoading;
-	const sessionActivity = useMemo(() => getCardSessionActivity(sessionSummary), [sessionSummary]);
+	const rawSessionActivity = useMemo(() => getCardSessionActivity(sessionSummary), [sessionSummary]);
+	const lastSessionActivityRef = useRef<CardSessionActivity | null>(null);
+	const lastSessionActivityCardIdRef = useRef<string | null>(null);
+	if (lastSessionActivityCardIdRef.current !== card.id) {
+		lastSessionActivityCardIdRef.current = card.id;
+		lastSessionActivityRef.current = null;
+	}
+	if (rawSessionActivity) {
+		lastSessionActivityRef.current = rawSessionActivity;
+	}
+	const sessionActivity = rawSessionActivity ?? lastSessionActivityRef.current;
 	const cancelAutomaticActionLabel =
 		!isTrashCard && card.autoReviewEnabled ? getTaskAutoReviewCancelButtonLabel(card.autoReviewMode) : null;
 
@@ -349,9 +445,7 @@ export function BoardCard({
 							)}
 						>
 							<div className="flex items-center gap-2" style={{ minHeight: 24 }}>
-								{statusMarker ? (
-									<div className="inline-flex items-center">{statusMarker}</div>
-								) : null}
+								{statusMarker ? <div className="inline-flex items-center">{statusMarker}</div> : null}
 								<div ref={titleContainerRef} className="flex-1 min-w-0">
 									<p
 										ref={titleRef}
@@ -473,7 +567,7 @@ export function BoardCard({
 								<div
 									className="flex gap-1.5 items-start mt-[6px]"
 									style={{
-									color: isTrashCard ? SESSION_ACTIVITY_COLOR.muted : undefined,
+										color: isTrashCard ? SESSION_ACTIVITY_COLOR.muted : undefined,
 									}}
 								>
 									<span
@@ -481,7 +575,7 @@ export function BoardCard({
 										style={{
 											width: 6,
 											height: 6,
-										backgroundColor: isTrashCard ? SESSION_ACTIVITY_COLOR.muted : sessionActivity.dotColor,
+											backgroundColor: isTrashCard ? SESSION_ACTIVITY_COLOR.muted : sessionActivity.dotColor,
 											marginTop: 4,
 										}}
 									/>
@@ -506,13 +600,13 @@ export function BoardCard({
 										lineHeight: 1.4,
 										whiteSpace: "normal",
 										overflowWrap: "anywhere",
-									color: isTrashCard ? SESSION_ACTIVITY_COLOR.muted : undefined,
+										color: isTrashCard ? SESSION_ACTIVITY_COLOR.muted : undefined,
 									}}
 								>
 									{isTrashCard ? (
 										<span
 											style={{
-											color: SESSION_ACTIVITY_COLOR.muted,
+												color: SESSION_ACTIVITY_COLOR.muted,
 												textDecoration: "line-through",
 											}}
 										>
@@ -520,24 +614,26 @@ export function BoardCard({
 										</span>
 									) : reviewWorkspaceSnapshot ? (
 										<>
-										<span style={{ color: SESSION_ACTIVITY_COLOR.secondary }}>{reviewWorkspacePath}</span>
+											<span style={{ color: SESSION_ACTIVITY_COLOR.secondary }}>{reviewWorkspacePath}</span>
 											<GitBranch
 												size={10}
 												style={{
 													display: "inline",
-												color: SESSION_ACTIVITY_COLOR.secondary,
+													color: SESSION_ACTIVITY_COLOR.secondary,
 													margin: "0px 4px 2px",
 													verticalAlign: "middle",
 												}}
 											/>
-										<span style={{ color: SESSION_ACTIVITY_COLOR.secondary }}>{reviewRefLabel}</span>
+											<span style={{ color: SESSION_ACTIVITY_COLOR.secondary }}>{reviewRefLabel}</span>
 											{reviewChangeSummary ? (
 												<>
-												<span style={{ color: SESSION_ACTIVITY_COLOR.muted }}> (</span>
-												<span style={{ color: SESSION_ACTIVITY_COLOR.muted }}>{reviewChangeSummary.filesLabel}</span>
-												<span className="text-status-green"> +{reviewChangeSummary.additions}</span>
-												<span className="text-status-red"> -{reviewChangeSummary.deletions}</span>
-												<span style={{ color: SESSION_ACTIVITY_COLOR.muted }}>)</span>
+													<span style={{ color: SESSION_ACTIVITY_COLOR.muted }}> (</span>
+													<span style={{ color: SESSION_ACTIVITY_COLOR.muted }}>
+														{reviewChangeSummary.filesLabel}
+													</span>
+													<span className="text-status-green"> +{reviewChangeSummary.additions}</span>
+													<span className="text-status-red"> -{reviewChangeSummary.deletions}</span>
+													<span style={{ color: SESSION_ACTIVITY_COLOR.muted }}>)</span>
 												</>
 											) : null}
 										</>

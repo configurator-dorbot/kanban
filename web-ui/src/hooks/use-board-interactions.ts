@@ -143,6 +143,55 @@ export function useBoardInteractions({
 		pending.resolve(started);
 	}, []);
 
+	const getPrimaryBoardTaskElement = useCallback((taskId: string): HTMLElement | null => {
+		const boardElement = document.querySelector<HTMLElement>(".kb-board");
+		if (!boardElement) {
+			return null;
+		}
+		for (const element of boardElement.querySelectorAll<HTMLElement>("[data-task-id]")) {
+			if (element.dataset.taskId === taskId) {
+				return element;
+			}
+		}
+		return null;
+	}, []);
+
+	const waitForBacklogCardHeightToSettle = useCallback(
+		async (taskId: string): Promise<void> => {
+			if (!getPrimaryBoardTaskElement(taskId)) {
+				return;
+			}
+
+			await new Promise<void>((resolve) => {
+				let previousHeight = 0;
+				let stableFrameCount = 0;
+				let framesRemaining = 8;
+
+				const measure = () => {
+					const cardElement = getPrimaryBoardTaskElement(taskId);
+					const nextHeight = cardElement?.getBoundingClientRect().height ?? 0;
+					if (nextHeight > 0 && previousHeight > 0 && Math.abs(nextHeight - previousHeight) < 0.5) {
+						stableFrameCount += 1;
+					} else {
+						stableFrameCount = 0;
+					}
+					previousHeight = nextHeight;
+
+					if (stableFrameCount >= 1 || framesRemaining <= 0) {
+						resolve();
+						return;
+					}
+
+					framesRemaining -= 1;
+					window.requestAnimationFrame(measure);
+				};
+
+				window.requestAnimationFrame(measure);
+			});
+		},
+		[getPrimaryBoardTaskElement],
+	);
+
 	const setTaskMoveToTrashLoading = useCallback((taskId: string, isLoading: boolean) => {
 		if (isLoading) {
 			moveToTrashLoadingByIdRef.current[taskId] = true;
@@ -311,8 +360,37 @@ export function useBoardInteractions({
 		[ensureTaskWorkspace, fetchTaskWorkspaceInfo, selectedTaskId, setBoard, startTaskSession],
 	);
 
+	const startBacklogTaskImmediately = useCallback(
+		async (task: BoardCard): Promise<boolean> => {
+			const selection = findCardSelection(board, task.id);
+			if (!selection || selection.column.id !== "backlog") {
+				return false;
+			}
+
+			setBoard((currentBoard) => {
+				const currentSelection = findCardSelection(currentBoard, task.id);
+				if (!currentSelection || currentSelection.column.id !== "backlog") {
+					return currentBoard;
+				}
+				const moved = moveTaskToColumn(currentBoard, task.id, "in_progress", { insertAtTop: true });
+				return moved.moved ? moved.board : currentBoard;
+			});
+
+			return kickoffTaskInProgress(task, task.id, "backlog", {
+				optimisticMove: true,
+			});
+		},
+		[board, kickoffTaskInProgress, setBoard],
+	);
+
 	const startBacklogTaskWithAnimation = useCallback(
 		async (task: BoardCard): Promise<boolean> => {
+			if (selectedCard) {
+				return startBacklogTaskImmediately(task);
+			}
+
+			await waitForBacklogCardHeightToSettle(task.id);
+
 			const programmaticMoveAttempt = tryProgrammaticCardMove(task.id, "backlog", "in_progress");
 			if (programmaticMoveAttempt === "blocked") {
 				await waitForProgrammaticCardMoveAvailability();
@@ -343,8 +421,10 @@ export function useBoardInteractions({
 		[
 			kickoffTaskInProgress,
 			resolvePendingProgrammaticStartMove,
-			setBoard,
+			selectedCard,
+			startBacklogTaskImmediately,
 			tryProgrammaticCardMove,
+			waitForBacklogCardHeightToSettle,
 			waitForProgrammaticCardMoveAvailability,
 		],
 	);
@@ -594,22 +674,10 @@ export function useBoardInteractions({
 			if (!selection || selection.column.id !== "backlog") {
 				return;
 			}
-			const programmaticMoveAttempt = tryProgrammaticCardMove(taskId, selection.column.id, "in_progress");
-			if (programmaticMoveAttempt === "started" || programmaticMoveAttempt === "blocked") {
-				return;
-			}
-			const moved = moveTaskToColumn(board, taskId, "in_progress", { insertAtTop: true });
-			if (!moved.moved) {
-				return;
-			}
-			setBoard(moved.board);
-			const movedSelection = findCardSelection(moved.board, taskId);
 			maybeRequestNotificationPermissionForTaskStart();
-			if (movedSelection) {
-				void kickoffTaskInProgress(movedSelection.card, taskId, "backlog");
-			}
+			void startBacklogTaskWithAnimation(selection.card);
 		},
-		[board, kickoffTaskInProgress, maybeRequestNotificationPermissionForTaskStart, setBoard, tryProgrammaticCardMove],
+		[board, maybeRequestNotificationPermissionForTaskStart, startBacklogTaskWithAnimation],
 	);
 
 	const handleStartAllBacklogTasks = useCallback(

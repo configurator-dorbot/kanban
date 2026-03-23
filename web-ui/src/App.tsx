@@ -14,15 +14,17 @@ import { KanbanBoard } from "@/components/kanban-board";
 import { ProjectNavigationPanel } from "@/components/project-navigation-panel";
 import { ResizableBottomPane } from "@/components/resizable-bottom-pane";
 import { RuntimeSettingsDialog, type RuntimeSettingsSection } from "@/components/runtime-settings-dialog";
+import { StartupOnboardingDialog } from "@/components/startup-onboarding-dialog";
 import { TaskCreateDialog } from "@/components/task-create-dialog";
 import { TaskInlineCreateCard } from "@/components/task-inline-create-card";
-import { TaskStartServicePromptDialog } from "@/components/task-start-service-prompt-dialog";
 import { TopBar } from "@/components/top-bar";
 import { Button } from "@/components/ui/button";
 import {
 	AlertDialog,
 	AlertDialogAction,
 	AlertDialogBody,
+	AlertDialogCancel,
+	AlertDialogDescription,
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
@@ -44,11 +46,16 @@ import { useReviewReadyNotifications } from "@/hooks/use-review-ready-notificati
 import { useShortcutActions } from "@/hooks/use-shortcut-actions";
 import { useTaskBranchOptions } from "@/hooks/use-task-branch-options";
 import { useTaskEditor } from "@/hooks/use-task-editor";
+import { useTaskStartActions } from "@/hooks/use-task-start-actions";
 import { useTaskSessions } from "@/hooks/use-task-sessions";
-import { useTaskStartServicePrompts } from "@/hooks/use-task-start-service-prompts";
+import { useStartupOnboarding } from "@/hooks/use-startup-onboarding";
 import { useTerminalPanels } from "@/hooks/use-terminal-panels";
 import { useWorkspaceSync } from "@/hooks/use-workspace-sync";
-import { isTaskAgentSetupSatisfied, selectLatestTaskChatMessageForTask } from "@/runtime/native-agent";
+import {
+	isTaskAgentSetupSatisfied,
+	selectLatestTaskChatMessageForTask,
+	selectTaskChatMessagesForTask,
+} from "@/runtime/native-agent";
 import type { RuntimeTaskSessionSummary } from "@/runtime/types";
 import { useRuntimeProjectConfig } from "@/runtime/use-runtime-project-config";
 import { useTerminalConnectionReady } from "@/runtime/use-terminal-connection-ready";
@@ -90,6 +97,7 @@ export default function App(): ReactElement {
 		workspaceState: streamedWorkspaceState,
 		workspaceMetadata,
 		latestTaskChatMessage,
+		taskChatMessagesByTaskId,
 		latestTaskReadyForReview,
 		streamError,
 		isRuntimeDisconnected,
@@ -100,7 +108,11 @@ export default function App(): ReactElement {
 		isProjectSwitching,
 		handleSelectProject,
 		handleAddProject,
+		handleConfirmInitializeGitProject,
+		handleCancelInitializeGitProject,
 		handleRemoveProject,
+		pendingGitInitializationPath,
+		isInitializingGitProject,
 		resetProjectNavigationState,
 	} = useProjectNavigation({
 		onProjectSwitchStart: handleProjectSwitchStart,
@@ -110,12 +122,29 @@ export default function App(): ReactElement {
 	const isInitialRuntimeLoad =
 		!hasReceivedSnapshot && currentProjectId === null && projects.length === 0 && !streamError;
 	const isAwaitingWorkspaceSnapshot = currentProjectId !== null && streamedWorkspaceState === null;
-	const { config: runtimeProjectConfig, refresh: refreshRuntimeProjectConfig } =
+	const {
+		config: runtimeProjectConfig,
+		isLoading: isRuntimeProjectConfigLoading,
+		refresh: refreshRuntimeProjectConfig,
+	} =
 		useRuntimeProjectConfig(currentProjectId);
 	const isTaskAgentReady = isTaskAgentSetupSatisfied(runtimeProjectConfig);
 	const settingsWorkspaceId = navigationCurrentProjectId ?? currentProjectId;
 	const { config: settingsRuntimeProjectConfig, refresh: refreshSettingsRuntimeProjectConfig } =
 		useRuntimeProjectConfig(settingsWorkspaceId);
+	const {
+		isStartupOnboardingDialogOpen,
+		handleCloseStartupOnboardingDialog,
+		handleSelectOnboardingAgent,
+		handleOnboardingClineSetupSaved,
+	} = useStartupOnboarding({
+		currentProjectId,
+		runtimeProjectConfig,
+		isRuntimeProjectConfigLoading,
+		isTaskAgentReady,
+		refreshRuntimeProjectConfig,
+		refreshSettingsRuntimeProjectConfig,
+	});
 	const {
 		markConnectionReady: markTerminalConnectionReady,
 		prepareWaitForConnection: prepareWaitForTerminalConnectionReady,
@@ -168,6 +197,7 @@ export default function App(): ReactElement {
 		currentProjectId,
 		streamedWorkspaceState,
 		hasNoProjects,
+		hasReceivedSnapshot,
 		isDocumentVisible,
 		setBoard,
 		setSessions,
@@ -225,6 +255,8 @@ export default function App(): ReactElement {
 		isInlineTaskCreateOpen,
 		newTaskPrompt,
 		setNewTaskPrompt,
+		newTaskImages,
+		setNewTaskImages,
 		newTaskStartInPlanMode,
 		setNewTaskStartInPlanMode,
 		newTaskAutoReviewEnabled,
@@ -237,6 +269,8 @@ export default function App(): ReactElement {
 		editingTaskId,
 		editTaskPrompt,
 		setEditTaskPrompt,
+		editTaskImages,
+		setEditTaskImages,
 		editTaskStartInPlanMode,
 		setEditTaskStartInPlanMode,
 		editTaskAutoReviewEnabled,
@@ -311,6 +345,7 @@ export default function App(): ReactElement {
 		selectedCard,
 		runtimeProjectConfig,
 		sendTaskSessionInput,
+		sendTaskChatMessage,
 		fetchTaskWorkspaceInfo,
 		isGitHistoryOpen,
 		refreshWorkspaceState,
@@ -364,6 +399,7 @@ export default function App(): ReactElement {
 		taskSessions: sessions,
 		workspaceGit,
 		latestTaskChatMessage,
+		taskChatMessagesByTaskId,
 	});
 	const { runningShortcutLabel, handleSelectShortcutLabel, handleRunShortcut } = useShortcutActions({
 		currentProjectId,
@@ -495,21 +531,6 @@ export default function App(): ReactElement {
 		setIsGitHistoryOpen(false);
 	}, []);
 
-	useAppHotkeys({
-		selectedCard,
-		isDetailTerminalOpen,
-		isHomeTerminalOpen: showHomeBottomTerminal,
-		isHomeGitHistoryOpen: !selectedCard && isGitHistoryOpen,
-		handleToggleDetailTerminal,
-		handleToggleHomeTerminal,
-		handleToggleExpandDetailTerminal,
-		handleToggleExpandHomeTerminal: handleToggleExpandHomeTerminal,
-		handleOpenCreateTask,
-		handleOpenSettings,
-		handleToggleGitHistory,
-		handleCloseGitHistory,
-	});
-
 	const {
 		handleProgrammaticCardMoveReady,
 		handleCreateDependency,
@@ -554,27 +575,30 @@ export default function App(): ReactElement {
 	const {
 		handleCreateAndStartTask,
 		handleCreateAndStartTasks,
-		handleStartTaskWithServiceSetupPrompt,
-		handleStartAllBacklogTasksWithServiceSetupPrompt,
-		taskStartServicePromptDialogOpen,
-		taskStartServicePromptDialogPrompt,
-		taskStartServicePromptDoNotShowAgain,
-		setTaskStartServicePromptDoNotShowAgain,
-		handleCloseTaskStartServicePrompt,
-		handleRunTaskStartServiceInstallCommand,
-	} = useTaskStartServicePrompts({
+		handleStartTaskFromBoard,
+		handleStartAllBacklogTasksFromBoard,
+	} = useTaskStartActions({
 		board,
-		currentProjectId,
-		selectedAgentId: runtimeProjectConfig?.selectedAgentId,
-		taskStartSetupAvailability: runtimeProjectConfig?.taskStartSetupAvailability,
-		isTaskAgentSetupSatisfied: isTaskAgentReady,
 		handleCreateTask,
 		handleCreateTasks,
 		handleStartTask,
 		handleStartAllBacklogTasks,
-		prepareTerminalForShortcut,
-		prepareWaitForTerminalConnectionReady,
-		sendTaskSessionInput,
+	});
+
+	useAppHotkeys({
+		selectedCard,
+		isDetailTerminalOpen,
+		isHomeTerminalOpen: showHomeBottomTerminal,
+		isHomeGitHistoryOpen: !selectedCard && isGitHistoryOpen,
+		handleToggleDetailTerminal,
+		handleToggleHomeTerminal,
+		handleToggleExpandDetailTerminal,
+		handleToggleExpandHomeTerminal: handleToggleExpandHomeTerminal,
+		handleOpenCreateTask,
+		handleOpenSettings,
+		handleToggleGitHistory,
+		handleCloseGitHistory,
+		onStartAllTasks: handleStartAllBacklogTasksFromBoard,
 	});
 
 	useEffect(() => {
@@ -585,9 +609,9 @@ export default function App(): ReactElement {
 		if (!selection || selection.column.id !== "backlog") {
 			return;
 		}
-		handleStartTaskWithServiceSetupPrompt(pendingTaskStartAfterEditId);
+		handleStartTaskFromBoard(pendingTaskStartAfterEditId);
 		setPendingTaskStartAfterEditId(null);
-	}, [board, handleStartTaskWithServiceSetupPrompt, pendingTaskStartAfterEditId]);
+	}, [board, handleStartTaskFromBoard, pendingTaskStartAfterEditId]);
 
 	const detailSession = selectedCard
 		? (sessions[selectedCard.card.id] ?? createIdleTaskSession(selectedCard.card.id))
@@ -658,6 +682,10 @@ export default function App(): ReactElement {
 		currentProjectId,
 		workspacePath: activeWorkspacePath,
 	});
+	const selectedTaskChatMessages = selectTaskChatMessagesForTask(
+		selectedCard?.card.id,
+		taskChatMessagesByTaskId,
+	);
 	const latestSelectedTaskChatMessage = selectLatestTaskChatMessageForTask(
 		selectedCard?.card.id,
 		latestTaskChatMessage,
@@ -675,6 +703,8 @@ export default function App(): ReactElement {
 		<TaskInlineCreateCard
 			prompt={editTaskPrompt}
 			onPromptChange={setEditTaskPrompt}
+			images={editTaskImages}
+			onImagesChange={setEditTaskImages}
 			onCreate={handleSaveEditedTask}
 			onCreateAndStart={handleSaveAndStartEditedTask}
 			onCancel={handleCancelEditTask}
@@ -822,8 +852,8 @@ export default function App(): ReactElement {
 											workspacePath={workspacePath}
 											onCardSelect={handleCardSelect}
 											onCreateTask={handleOpenCreateTask}
-											onStartTask={handleStartTaskWithServiceSetupPrompt}
-											onStartAllTasks={handleStartAllBacklogTasksWithServiceSetupPrompt}
+											onStartTask={handleStartTaskFromBoard}
+											onStartAllTasks={handleStartAllBacklogTasksFromBoard}
 											onClearTrash={handleOpenClearTrash}
 											editingTaskId={editingTaskId}
 											inlineTaskEditor={inlineTaskEditor}
@@ -895,14 +925,15 @@ export default function App(): ReactElement {
 								currentProjectId={currentProjectId}
 								workspacePath={workspacePath}
 								selectedAgentId={runtimeProjectConfig?.selectedAgentId ?? null}
+								runtimeConfig={runtimeProjectConfig ?? null}
 								sessionSummary={detailSession}
 								taskSessions={sessions}
 								onSessionSummary={upsertSession}
 								onCardSelect={handleCardSelect}
 								onTaskDragEnd={handleDetailTaskDragEnd}
 								onCreateTask={handleOpenCreateTask}
-								onStartTask={handleStartTaskWithServiceSetupPrompt}
-								onStartAllTasks={handleStartAllBacklogTasksWithServiceSetupPrompt}
+								onStartTask={handleStartTaskFromBoard}
+								onStartAllTasks={handleStartAllBacklogTasksFromBoard}
 								onClearTrash={handleOpenClearTrash}
 								editingTaskId={editingTaskId}
 								inlineTaskEditor={inlineTaskEditor}
@@ -930,7 +961,8 @@ export default function App(): ReactElement {
 								onSendClineChatMessage={sendTaskChatMessage}
 								onCancelClineChatTurn={cancelTaskChatTurn}
 								onLoadClineChatMessages={fetchTaskChatMessages}
-								latestClineChatMessage={latestSelectedTaskChatMessage}
+									latestClineChatMessage={latestSelectedTaskChatMessage}
+									streamedClineChatMessages={selectedTaskChatMessages}
 								onMoveToTrash={handleMoveToTrash}
 								isMoveToTrashLoading={moveToTrashLoadingById[selectedCard.card.id] ?? false}
 								gitHistoryPanel={
@@ -952,6 +984,7 @@ export default function App(): ReactElement {
 								isBottomTerminalExpanded={isDetailTerminalExpanded}
 								onBottomTerminalToggleExpand={handleToggleExpandDetailTerminal}
 								isDocumentVisible={isDocumentVisible}
+								onClineSettingsSaved={refreshRuntimeProjectConfig}
 							/>
 						</div>
 					) : null}
@@ -978,6 +1011,8 @@ export default function App(): ReactElement {
 				onOpenChange={handleCreateDialogOpenChange}
 				prompt={newTaskPrompt}
 				onPromptChange={setNewTaskPrompt}
+				images={newTaskImages}
+				onImagesChange={setNewTaskImages}
 				onCreate={handleCreateTask}
 				onCreateAndStart={handleCreateAndStartTask}
 				onCreateMultiple={handleCreateTasks}
@@ -1000,14 +1035,71 @@ export default function App(): ReactElement {
 				onCancel={() => setIsClearTrashDialogOpen(false)}
 				onConfirm={handleConfirmClearTrash}
 			/>
-			<TaskStartServicePromptDialog
-				open={taskStartServicePromptDialogOpen}
-				prompt={taskStartServicePromptDialogPrompt}
-				doNotShowAgain={taskStartServicePromptDoNotShowAgain}
-				onDoNotShowAgainChange={setTaskStartServicePromptDoNotShowAgain}
-				onClose={handleCloseTaskStartServicePrompt}
-				onRunInstallCommand={handleRunTaskStartServiceInstallCommand}
+			<StartupOnboardingDialog
+				open={isStartupOnboardingDialogOpen}
+				onClose={handleCloseStartupOnboardingDialog}
+				selectedAgentId={runtimeProjectConfig?.selectedAgentId ?? null}
+				agents={runtimeProjectConfig?.agents ?? []}
+				clineProviderSettings={runtimeProjectConfig?.clineProviderSettings ?? null}
+				workspaceId={currentProjectId}
+				runtimeConfig={runtimeProjectConfig ?? null}
+				onSelectAgent={handleSelectOnboardingAgent}
+				onClineSetupSaved={handleOnboardingClineSetupSaved}
 			/>
+
+			<AlertDialog
+				open={pendingGitInitializationPath !== null}
+				onOpenChange={(open) => {
+					if (!open) {
+						handleCancelInitializeGitProject();
+					}
+				}}
+			>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Initialize git repository?</AlertDialogTitle>
+				</AlertDialogHeader>
+				<AlertDialogBody>
+					<AlertDialogDescription asChild>
+						<div className="flex flex-col gap-3">
+							<p>
+								Cline requires git to manage worktrees for tasks. This folder is not a git
+								repository yet.
+							</p>
+							{pendingGitInitializationPath ? (
+								<p className="font-mono text-xs text-text-secondary break-all">
+									{pendingGitInitializationPath}
+								</p>
+							) : null}
+							<p>If you cancel, the project will not be added.</p>
+						</div>
+					</AlertDialogDescription>
+				</AlertDialogBody>
+				<AlertDialogFooter>
+					<AlertDialogCancel asChild>
+						<Button variant="default" disabled={isInitializingGitProject} onClick={handleCancelInitializeGitProject}>
+							Cancel
+						</Button>
+					</AlertDialogCancel>
+					<AlertDialogAction asChild>
+						<Button
+							variant="primary"
+							disabled={isInitializingGitProject}
+							onClick={() => {
+								void handleConfirmInitializeGitProject();
+							}}
+						>
+							{isInitializingGitProject ? (
+								<>
+									<Spinner size={14} />
+									Initializing...
+								</>
+							) : (
+								"Initialize git"
+							)}
+						</Button>
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialog>
 
 			<AlertDialog
 				open={gitActionError !== null}

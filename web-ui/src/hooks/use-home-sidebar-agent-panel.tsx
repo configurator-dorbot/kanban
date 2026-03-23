@@ -17,6 +17,7 @@ import type {
 	RuntimeConfigResponse,
 	RuntimeGitRepositoryInfo,
 	RuntimeStateStreamTaskChatMessage,
+	RuntimeTaskChatMessage,
 	RuntimeTaskSessionSummary,
 } from "@/runtime/types";
 import { TERMINAL_THEME_COLORS } from "@/terminal/theme-colors";
@@ -28,6 +29,7 @@ interface UseHomeSidebarAgentPanelInput {
 	taskSessions: Record<string, RuntimeTaskSessionSummary>;
 	workspaceGit: RuntimeGitRepositoryInfo | null;
 	latestTaskChatMessage: RuntimeStateStreamTaskChatMessage | null;
+	taskChatMessagesByTaskId: Record<string, RuntimeTaskChatMessage[]>;
 }
 
 async function stopHomeSidebarTaskSession(workspaceId: string, taskId: string): Promise<void> {
@@ -47,6 +49,7 @@ export function useHomeSidebarAgentPanel({
 	taskSessions,
 	workspaceGit,
 	latestTaskChatMessage,
+	taskChatMessagesByTaskId,
 }: UseHomeSidebarAgentPanelInput): ReactElement | null {
 	const [sessionSummaries, setSessionSummaries] = useState<Record<string, RuntimeTaskSessionSummary>>({});
 	const upsertSessionSummary = useCallback((summary: RuntimeTaskSessionSummary) => {
@@ -98,11 +101,12 @@ export function useHomeSidebarAgentPanel({
 	}, [runtimeProjectConfig]);
 
 	const homeAgentPanelSummary = taskId ? (effectiveSessionSummaries[taskId] ?? null) : null;
+	const homeTaskChatMessages = taskId ? (taskChatMessagesByTaskId[taskId] ?? []) : [];
 	const latestHomeTaskChatMessage = selectLatestTaskChatMessageForTask(taskId, latestTaskChatMessage);
 
 	const handleSendHomeClineChatMessage = useCallback(
-		async (messageTaskId: string, text: string) => {
-			const result = await sendTaskChatMessage(messageTaskId, text);
+		async (messageTaskId: string, text: string, options?: { mode?: "act" | "plan" }) => {
+			const result = await sendTaskChatMessage(messageTaskId, text, options);
 			if (!result.ok) {
 				return result;
 			}
@@ -144,12 +148,17 @@ export function useHomeSidebarAgentPanel({
 				key={taskId}
 				taskId={taskId}
 				summary={homeAgentPanelSummary ?? createIdleTaskSession(taskId)}
+				defaultMode="act"
+				showComposerModeToggle={false}
+				workspaceId={currentProjectId}
+				runtimeConfig={runtimeProjectConfig}
 				onSendMessage={handleSendHomeClineChatMessage}
 				onCancelTurn={handleCancelHomeClineChatTurn}
 				onLoadMessages={handleLoadHomeClineChatMessages}
 				incomingMessage={latestHomeTaskChatMessage}
+				incomingMessages={homeTaskChatMessages}
 				showRightBorder={false}
-				composerPlaceholder="Ask Cline anything about this repository"
+				composerPlaceholder="Ask Cline to add, edit, start, or link tasks"
 			/>
 		);
 	}
