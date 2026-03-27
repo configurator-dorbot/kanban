@@ -20,7 +20,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
 import { openFeaturebaseFeedbackWidget } from "@/hooks/use-featurebase-feedback-widget";
 import type { RuntimeClineProviderSettings, RuntimeProjectSummary } from "@/runtime/types";
-import { isClineProviderAuthenticated } from "@/runtime/native-agent";
+import { isClineOauthAuthenticated } from "@/runtime/native-agent";
 import { formatPathForDisplay } from "@/utils/path-display";
 import { isMacPlatform, modifierKeyLabel } from "@/utils/platform";
 
@@ -413,7 +413,7 @@ function ShortcutsCard(): React.ReactElement {
 }
 
 export function FeedbackCard({ clineProviderSettings }: { clineProviderSettings?: RuntimeClineProviderSettings | null }): React.ReactElement {
-	const isEligible = isClineProviderAuthenticated(clineProviderSettings);
+	const isEligible = isClineOauthAuthenticated(clineProviderSettings);
 
 	const handleOpenFeedback = useCallback(() => {
 		openFeaturebaseFeedbackWidget();
