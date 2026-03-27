@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RuntimeClineProviderSettings } from "@/runtime/types";
 import type { FeaturebaseFeedbackState } from "@/hooks/use-featurebase-feedback-widget";
@@ -65,7 +65,7 @@ describe("FeedbackCard", () => {
 
 	// 1. Non-Cline agent => renders nothing
 	it("renders nothing when selected agent is not Cline", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "ready", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "ready" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -80,7 +80,7 @@ describe("FeedbackCard", () => {
 
 	// 2. Cline runtime + unauthenticated => renders nothing
 	it("renders nothing when not authenticated", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "ready", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "ready" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -95,7 +95,7 @@ describe("FeedbackCard", () => {
 
 	// 3. Cline runtime + non-Cline provider/tokens => renders nothing
 	it("renders nothing when tokens present but oauthProvider is not cline", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "ready", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "ready" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -110,7 +110,7 @@ describe("FeedbackCard", () => {
 
 	// 4. Authenticated Cline OAuth + authState: "idle" => renders nothing
 	it("renders nothing when Featurebase is idle", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "idle", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "idle" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -125,7 +125,7 @@ describe("FeedbackCard", () => {
 
 	// 5. Authenticated Cline OAuth + authState: "loading" => renders nothing
 	it("renders nothing when Featurebase is loading", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "loading", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "loading" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -140,7 +140,7 @@ describe("FeedbackCard", () => {
 
 	// 6. Authenticated Cline OAuth + authState: "error" => renders nothing
 	it("renders nothing when Featurebase has error", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "error", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "error" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -155,7 +155,7 @@ describe("FeedbackCard", () => {
 
 	// 7. Authenticated Cline OAuth + authState: "ready" => renders enabled Share Feedback
 	it("renders enabled Share Feedback when fully authenticated and Featurebase is ready", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "ready", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "ready" };
 		act(() => {
 			root.render(
 				<FeedbackCard
@@ -173,7 +173,7 @@ describe("FeedbackCard", () => {
 
 	// 8. Regression: ready-state button has data-featurebase-feedback
 	it("renders data-featurebase-feedback attribute on the Share Feedback button (regression)", () => {
-		const fbState: FeaturebaseFeedbackState = { authState: "ready", retry: vi.fn() };
+		const fbState: FeaturebaseFeedbackState = { authState: "ready" };
 		act(() => {
 			root.render(
 				<FeedbackCard

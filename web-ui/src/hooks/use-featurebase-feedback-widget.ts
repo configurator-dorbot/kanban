@@ -24,8 +24,6 @@ export type FeaturebaseAuthState = "idle" | "loading" | "ready" | "error";
 export interface FeaturebaseFeedbackState {
 	/** Current pre-identify readiness. */
 	authState: FeaturebaseAuthState;
-	/** Re-run the token fetch + identify flow on demand. */
-	retry: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +152,7 @@ export function useFeaturebaseFeedbackWidget(input: {
 		};
 	}, []);
 
-	// Core pre-identify routine, callable from the effect and from retry().
+	// Core pre-identify routine with bounded automatic retries.
 	const runPreIdentify = useCallback(
 		(attempt: number, retryIndex: number) => {
 			if (!workspaceId || !isAuthenticated) {
@@ -241,12 +239,5 @@ export function useFeaturebaseFeedbackWidget(input: {
 		};
 	}, [workspaceId, isAuthenticated, runPreIdentify]);
 
-	// Retry: bump the attempt counter and re-run from scratch.
-	const retry = useCallback(() => {
-		clearRetryTimer();
-		const attempt = ++attemptRef.current;
-		runPreIdentify(attempt, 0);
-	}, [runPreIdentify]);
-
-	return { authState, retry };
+	return { authState };
 }

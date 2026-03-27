@@ -352,11 +352,13 @@ describe("useFeaturebaseFeedbackWidget", () => {
 		expect(hookResult!.authState).toBe("error");
 	});
 
-	it("retry() re-runs pre-identify after error", async () => {
+	it("auto-retries after identify callback error and transitions to ready on success", async () => {
+		vi.useFakeTimers();
 		const { module, fetchFeaturebaseTokenMock } = await importFeaturebaseModule();
+		// Both token fetches succeed
 		fetchFeaturebaseTokenMock
-			.mockRejectedValueOnce(new Error("Network error"))
-			.mockResolvedValueOnce({ featurebaseJwt: "jwt-retry" });
+			.mockResolvedValueOnce({ featurebaseJwt: "jwt-first" })
+			.mockResolvedValueOnce({ featurebaseJwt: "jwt-second" });
 		const featurebaseMock = vi.fn();
 		mockSdkLoad(featurebaseMock);
 
@@ -376,16 +378,40 @@ describe("useFeaturebaseFeedbackWidget", () => {
 			await Promise.resolve();
 		});
 
+		// First identify call should have happened
+		const firstIdentifyCall = featurebaseMock.mock.calls.find((call: unknown[]) => call[0] === "identify");
+		expect(firstIdentifyCall).toBeTruthy();
+		expect(fetchFeaturebaseTokenMock).toHaveBeenCalledTimes(1);
+
+		// Invoke the first identify callback with an error
+		await act(async () => {
+			(firstIdentifyCall?.[2] as (error: unknown) => void)?.(new Error("identify failed"));
+			await Promise.resolve();
+		});
+
 		expect(hookResult!.authState).toBe("error");
 
+		// Advance timers by the first retry delay (2s)
 		await act(async () => {
-			hookResult!.retry();
+			vi.advanceTimersByTime(2_000);
 			await Promise.resolve();
 			await Promise.resolve();
 			await Promise.resolve();
 		});
 
+		// Token should be fetched again and a second identify call issued
 		expect(fetchFeaturebaseTokenMock).toHaveBeenCalledTimes(2);
+		const identifyCalls = featurebaseMock.mock.calls.filter((call: unknown[]) => call[0] === "identify");
+		expect(identifyCalls.length).toBe(2);
+
+		// Invoke the second identify callback with null (success)
+		const secondIdentifyCall = identifyCalls[1];
+		await act(async () => {
+			(secondIdentifyCall?.[2] as (error: unknown) => void)?.(null);
+			await Promise.resolve();
+		});
+
+		expect(hookResult!.authState).toBe("ready");
 	});
 
 	it("does not pre-identify when workspaceId is null", async () => {
