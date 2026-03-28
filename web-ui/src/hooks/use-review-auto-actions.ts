@@ -189,7 +189,8 @@ export function useReviewAutoActions({
 				// Commit/PR automation mental model:
 				// - A task is only "armed" for auto-trash after we actually see working changes in review and trigger commit/pr.
 				// - Review entries with zero changes (common during start-in-plan-mode planning loops) are intentionally ignored.
-				// - Once armed, a later review state with zero changes is treated as commit/pr success, then we auto-move to trash.
+				// - Once armed, a later review state with zero changes is treated as commit/pr success.
+				//   Commit mode auto-moves to trash; PR mode leaves the task in Review for external automation.
 				const changedFiles = getTaskWorkspaceSnapshot(reviewTask.id)?.changedFiles;
 				const awaitingAction = awaitingCleanActionByTaskIdRef.current[reviewTask.id] ?? null;
 				if (awaitingAction) {
@@ -198,6 +199,13 @@ export function useReviewAutoActions({
 						!isGitActionInFlight &&
 						!moveToTrashInFlightTaskIdsRef.current.has(reviewTask.id)
 					) {
+						// PR mode: leave task in Review after PR is created — external automation
+						// (e.g. GitHub Actions on PR merge) handles trashing and unlocking linked tasks.
+						if (autoReviewMode === "pr") {
+							delete awaitingCleanActionByTaskIdRef.current[reviewTask.id];
+							clearAutoReviewTimer(reviewTask.id);
+							continue;
+						}
 						scheduleAutoReviewAction(reviewTask.id, "move_to_trash", () => {
 							const latestSelection = findCardSelection(boardRef.current, reviewTask.id);
 							if (!latestSelection || latestSelection.column.id !== "review") {
