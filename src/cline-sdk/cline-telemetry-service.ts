@@ -69,11 +69,3 @@ export async function disposeCliTelemetryService(): Promise<void> {
 	telemetrySingleton = undefined;
 	await current.dispose();
 }
-
-export async function createClineSdkSessionHost(): Promise<ClineSdkSessionHost> {
-	return await createSessionHost({
-		backendMode: "auto",
-		autoStartRpcServer: true,
-		telemetry: getCliTelemetryService(),
-	});
-}
