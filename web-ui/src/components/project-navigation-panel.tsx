@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
-import { openFeaturebaseFeedbackWidget } from "@/hooks/use-featurebase-feedback-widget";
 import type { RuntimeProjectSummary } from "@/runtime/types";
 import { formatPathForDisplay } from "@/utils/path-display";
 import { isMacPlatform, modifierKeyLabel } from "@/utils/platform";
