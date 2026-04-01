@@ -474,6 +474,14 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 				};
 			}
 
+			// Best-effort fetch so the tracking ref is current before we resolve it.
+			const slashIndex = requestedBaseRef.indexOf("/");
+			if (slashIndex > 0 && slashIndex < requestedBaseRef.length - 1) {
+				const remote = requestedBaseRef.slice(0, slashIndex);
+				const branch = requestedBaseRef.slice(slashIndex + 1);
+				await runGit(context.repoPath, ["fetch", remote, branch]);
+			}
+
 			const baseRefResult = await runGit(context.repoPath, [
 				"rev-parse",
 				"--verify",
